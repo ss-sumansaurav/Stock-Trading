@@ -7,6 +7,9 @@
   scan [--date YYYY-MM-DD]     run the scan on data already loaded
   daily [--date D] [--no-wait] full evening job: download, scan, Telegram, backup
   schedule                     run forever, doing `daily` each weekday at 19:00 IST
+  cloud-upload                 upload this computer's data to GitHub (for the hosted setup)
+  cloud-run [--action A]       used by GitHub Actions: download data, run A (daily/backfill/
+                               telegram-test), upload data
   demo                         load synthetic demo data (use a separate --settings/db)
   telegram-test                send a test message to your Telegram channel
   position add SYM DATE PRICE QTY | position list | position close ID
@@ -15,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import date, timedelta
 
@@ -36,6 +40,10 @@ def main(argv=None):
     sub.add_parser("schedule")
     sub.add_parser("telegram-test")
     sub.add_parser("demo")
+    sub.add_parser("cloud-upload")
+    cr = sub.add_parser("cloud-run")
+    cr.add_argument("--action", default="daily", choices=["daily", "backfill", "telegram-test"])
+    cr.add_argument("--years", type=float)
     p = sub.add_parser("position"); p.add_argument("action", choices=["add", "list", "close"])
     p.add_argument("args", nargs="*")
     a = ap.parse_args(argv)
@@ -86,6 +94,18 @@ def main(argv=None):
     elif a.cmd == "schedule":
         from .runner import start_scheduler
         start_scheduler(cfg)
+    elif a.cmd == "cloud-upload":
+        from . import cloud
+        if not cloud.enabled() or not os.environ.get("GITHUB_TOKEN"):
+            print("Add APP_PASSWORD, GITHUB_REPO and GITHUB_TOKEN to .env first (see README, 'Hosting').")
+            return 1
+        db.conn.commit()
+        cloud.push_db(cfg["paths"]["db"])
+        print("Uploaded. The hosted scanner and dashboard will use this data.")
+    elif a.cmd == "cloud-run":
+        from .cloud_run import cloud_run
+        db.conn.close()
+        return cloud_run(cfg, a.action, a.years)
     elif a.cmd == "demo":
         from .demo import load_demo
         from .scan import run_scan

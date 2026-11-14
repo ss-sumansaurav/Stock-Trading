@@ -37,12 +37,36 @@ def log_run(db: DB, d: date, status: str, msg: str, started: datetime):
              now_ist().isoformat(timespec="seconds")))
 
 
+def _ran(db: DB, d: date, status: str) -> bool:
+    return bool(db.q("SELECT 1 FROM runs WHERE trade_date=? AND status=?", (d.isoformat(), status)).shape[0])
+
+
+def _describe(e: Exception) -> str:
+    """Turn network failures into a plain explanation (e.g. NSE blocking a cloud server)."""
+    import requests
+    txt = str(e)
+    if isinstance(e, requests.HTTPError) or any(c in txt for c in ("401", "403")):
+        return (f"NSE refused the download ({txt}). NSE often blocks cloud servers such as GitHub's; "
+                "if this keeps happening, run the scanner on your Mac or an Indian server instead.")
+    if isinstance(e, (requests.ConnectionError, requests.Timeout)):
+        return (f"Could not reach NSE ({txt}). NSE may be blocking this server, or the site is down.")
+    return txt
+
+
 def daily_job(cfg: dict, d: date | None = None, wait: bool = True, send: bool = True) -> str:
-    """Run the whole evening pipeline for trading day d (default: today, IST)."""
+    """Run the whole evening pipeline for trading day d (default: today, IST).
+
+    wait=True (Mac/server): keep retrying inside this call until give_up_time.
+    wait=False (GitHub Actions): one attempt per call; the workflow calls again every 30 minutes.
+    Returns ok / done / holiday / not_yet / missing / error.
+    """
     started = now_ist()
     d = d or started.date()
     db = open_db(cfg)
     sess = NSESession(cfg["data"]["request_timeout"])
+    if _ran(db, d, "ok"):
+        log.info("%s already scanned", d)
+        return "done"
     try:
         refresh_holidays(db, sess, cfg["data"].get("extra_holidays", []))
         if not is_trading_day(db, d):
@@ -60,11 +84,16 @@ def daily_job(cfg: dict, d: date | None = None, wait: bool = True, send: bool = 
                 log.info("Loaded %s rows for %s", n, d)
             except NotPublished:
                 nxt = now_ist() + step
-                if not wait or nxt > give_up:
+                final = nxt > give_up if wait else now_ist() >= give_up - timedelta(minutes=5)
+                if not wait and not final:
+                    log.info("Bhavcopy not yet published; the next scheduled attempt will retry")
+                    return "not_yet"
+                if final:
                     msg = f"NSE bhavcopy for {d:%d %b %Y} not published by {cfg['data']['give_up_time']} IST. No scan was run."
                     log.error(msg)
+                    already = _ran(db, d, "missing")
                     log_run(db, d, "missing", msg, started)
-                    if send:
+                    if send and not already:
                         telegram.send_error(msg)
                     return "missing"
                 log.info("Bhavcopy not yet published; retrying at %s", nxt.strftime("%H:%M"))
@@ -82,9 +111,11 @@ def daily_job(cfg: dict, d: date | None = None, wait: bool = True, send: bool = 
     except Exception as e:
         tb = traceback.format_exc()
         log.error("Daily job failed: %s", tb)
-        log_run(db, d, "error", str(e), started)
-        if send:
-            telegram.send_error(f"Daily run for {d:%d %b %Y} failed: {e}")
+        already = _ran(db, d, "error")
+        msg = _describe(e)
+        log_run(db, d, "error", msg, started)
+        if send and (wait or not already):  # in cloud mode, alert once per day
+            telegram.send_error(f"Daily run for {d:%d %b %Y} failed: {msg}")
         return "error"
 
 

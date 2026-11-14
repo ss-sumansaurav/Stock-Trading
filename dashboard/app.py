@@ -4,8 +4,11 @@ Works on a phone browser: single-column layout, horizontal page switcher, touch-
 """
 from __future__ import annotations
 
+import hmac
 import json
+import os
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -38,13 +41,57 @@ AUTO_COLORS = ["#2a78d6", "#1aa37a", "#8a5cd6", "#c9a400", "#0fa3b1", "#5e7d99",
 MANUAL_COLORS = ["#ff6b2c", "#e8336f", "#ff9f1c", "#d81b60"]
 
 
-@st.cache_resource
+from avwap import cloud  # noqa: E402
+
+
+def _secret(name):
+    try:
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:
+        pass
+    return os.environ.get(name)
+
+
+# ---------------------------------------------------------------- password gate
+_pw = _secret("APP_PASSWORD")
+if _pw and not st.session_state.get("authed"):
+    st.markdown("### 📈 AVWAP Scanner")
+    with st.form("login"):
+        entered = st.text_input("Password", type="password")
+        if st.form_submit_button("Open"):
+            if hmac.compare_digest(entered.encode(), _pw.encode()):
+                st.session_state.authed = True
+                st.rerun()
+            st.error("Wrong password")
+    st.stop()
+
+CLOUD = cloud.enabled() and bool(_secret("GITHUB_TOKEN"))
+
+
+@st.cache_resource(ttl=1800, show_spinner="Loading the latest scan…")
 def get_db(path: str) -> DB:
+    if CLOUD:
+        local = os.path.join(tempfile.gettempdir(), "avwap-dashboard.sqlite")
+        if not cloud.pull_db(local, cloud.DASH_ASSET):
+            st.error("No data in GitHub yet. Upload it from your Mac with `python3 -m avwap cloud-upload`.")
+            st.stop()
+        return DB(local)
     return DB(path)
 
 
 cfg = load_settings()
 db = get_db(cfg["paths"]["db"])
+
+
+def write(sql: str, params=()):
+    """Save a change; in hosted mode also send positions/anchors/pins to GitHub."""
+    db.exec(sql, params)
+    if CLOUD:
+        try:
+            cloud.push_user_state(db.conn)
+        except Exception as e:
+            st.error(f"Saved here, but could not save to GitHub: {e}")
 
 qp = st.query_params
 PAGES = ["Scan", "Chart", "Positions", "Status"]
@@ -270,33 +317,33 @@ def page_chart():
                                   min_value=an.df.index[0].date(), max_value=an.df.index[-1].date())
                 lbl = st.text_input("Label", "Manual")
                 if st.form_submit_button("Add anchor"):
-                    db.exec("INSERT INTO manual_anchors (symbol, date, label, action, created_at) "
+                    write("INSERT INTO manual_anchors (symbol, date, label, action, created_at) "
                             "VALUES (?,?,?,?,datetime('now'))", (sym, d.isoformat(), lbl, "add"))
                     st.rerun()
         with t2:
             k = st.selectbox("Anchor to delete", keys, format_func=labels.get, key="del")
             if st.button("Delete anchor"):
-                db.exec("DELETE FROM manual_anchors WHERE symbol=? AND date=? AND action='add'", (sym, k))
-                db.exec("INSERT INTO manual_anchors (symbol, date, label, action, created_at) "
+                write("DELETE FROM manual_anchors WHERE symbol=? AND date=? AND action='add'", (sym, k))
+                write("INSERT INTO manual_anchors (symbol, date, label, action, created_at) "
                         "VALUES (?,?,?,?,datetime('now'))", (sym, k, None, "delete"))
                 st.rerun()
             deleted = db.q("SELECT id, date FROM manual_anchors WHERE symbol=? AND action='delete'", (sym,))
             if len(deleted):
                 r = st.selectbox("Restore a deleted automatic anchor", deleted["date"].tolist())
                 if st.button("Restore"):
-                    db.exec("DELETE FROM manual_anchors WHERE symbol=? AND date=? AND action='delete'", (sym, r))
+                    write("DELETE FROM manual_anchors WHERE symbol=? AND date=? AND action='delete'", (sym, r))
                     st.rerun()
         with t3:
             pin = db.q("SELECT anchor_date FROM pins WHERE symbol=?", (sym,))
             if len(pin):
                 st.write(f"Pinned: **{pin['anchor_date'].iat[0]}**")
                 if st.button("Unpin (use automatic rules)"):
-                    db.exec("DELETE FROM pins WHERE symbol=?", (sym,))
+                    write("DELETE FROM pins WHERE symbol=?", (sym,))
                     st.rerun()
             k = st.selectbox("Pin as primary", keys, format_func=labels.get, key="pin")
             if st.button("Pin"):
                 a = next(x for x in an.anchors if x.key == k)
-                db.exec("INSERT OR REPLACE INTO pins VALUES (?,?,?)", (sym, k, a.label))
+                write("INSERT OR REPLACE INTO pins VALUES (?,?,?)", (sym, k, a.label))
                 st.rerun()
 
 
@@ -345,11 +392,11 @@ def page_positions():
                                   else next(f"{a.label} · {k}" for a in an.anchors if a.key == k))
             c1, c2 = st.columns(2)
             if c1.button("Save trailing anchor"):
-                db.exec("UPDATE positions SET trailing_anchor_date=? WHERE id=?",
+                write("UPDATE positions SET trailing_anchor_date=? WHERE id=?",
                         (None if choice == "auto" else choice, pid))
                 st.rerun()
             if c2.button("Close position"):
-                db.exec("UPDATE positions SET closed=1 WHERE id=?", (pid,))
+                write("UPDATE positions SET closed=1 WHERE id=?", (pid,))
                 st.rerun()
     else:
         st.info("No open positions.")
@@ -363,7 +410,7 @@ def page_positions():
         px = c3.number_input("Entry price", min_value=0.0, step=0.05, format="%.2f")
         q = c4.number_input("Quantity", min_value=0.0, step=1.0)
         if st.form_submit_button("Add position") and px > 0:
-            db.exec("INSERT INTO positions (symbol, entry_date, entry_price, qty) VALUES (?,?,?,?)",
+            write("INSERT INTO positions (symbol, entry_date, entry_price, qty) VALUES (?,?,?,?)",
                     (sym, d.isoformat(), px, q))
             st.rerun()
 
@@ -371,6 +418,9 @@ def page_positions():
 # =============================================================== STATUS
 def page_status():
     st.subheader("Status")
+    if CLOUD and st.button("Reload latest data from GitHub"):
+        get_db.clear()
+        st.rerun()
     runs = db.q("SELECT trade_date, status, message, started_at, finished_at FROM runs ORDER BY id DESC LIMIT 20")
     last = db.last_loaded_day()
     uni = db.q("SELECT exchange, COUNT(*) n FROM universe WHERE active=1 GROUP BY exchange")
