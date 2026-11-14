@@ -1,7 +1,8 @@
 """Command line: python -m avwap <command>
 
   init                         create the database
-  universe FILE                import BSE 500 constituents (bseindia.com download, CSV/XLSX)
+  universe                     download the BSE 500 list from bseindia.com and import it
+  universe FILE                import a BSE 500 list you downloaded yourself (CSV/XLSX)
   backfill [--years N]         download N years of NSE bhavcopies (+ corporate actions)
   scan [--date YYYY-MM-DD]     run the scan on data already loaded
   daily [--date D] [--no-wait] full evening job: download, scan, Telegram, backup
@@ -27,7 +28,7 @@ def main(argv=None):
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init")
-    u = sub.add_parser("universe"); u.add_argument("file")
+    u = sub.add_parser("universe"); u.add_argument("file", nargs="?")
     b = sub.add_parser("backfill"); b.add_argument("--years", type=float)
     s = sub.add_parser("scan"); s.add_argument("--date"); s.add_argument("--send", action="store_true")
     d = sub.add_parser("daily"); d.add_argument("--date"); d.add_argument("--no-wait", action="store_true")
@@ -51,7 +52,14 @@ def main(argv=None):
     elif a.cmd == "universe":
         from .data.nse import NSESession
         from .data.pipeline import import_universe
-        print(import_universe(db, a.file, NSESession()))
+        path = a.file
+        if not path:
+            from .data.bse_api import fetch_bse500
+            path = cfg["paths"]["universe_csv"]
+            fetch_bse500(path)
+        res = import_universe(db, path, NSESession())
+        print(f"BSE 500 imported: {res['total']} stocks ({res['added']} added, {res['removed']} removed, "
+              f"{res['bse_only']} not on NSE)")
     elif a.cmd == "backfill":
         from .data.nse import NSESession
         from .data.pipeline import backfill, refresh_corporate_actions, refresh_holidays, refresh_results_dates

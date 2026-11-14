@@ -44,20 +44,24 @@ python -m avwap init
 
 ### 2. BSE 500 universe
 
-1. Open the BSE 500 index page on BSE: https://www.bseindia.com/sensex/code/17
-2. Download the list of stocks in the index with the download (CSV/Excel) icon on that page.
-3. Import it:
-
 ```bash
-python3 -m avwap universe ~/Downloads/<downloaded file>
+python3 -m avwap universe
 ```
 
-The importer finds the header row itself and reads the scrip code, name, scrip ID and industry
-columns. If the file has no ISINs (BSE's download usually doesn't), scrip codes are mapped to ISINs
-using the latest BSE bhavcopy, and ISINs to NSE symbols using NSE's `EQUITY_L.csv`. Stocks not listed
-on NSE are logged, shown as `BSE-<scrip code>`, priced from the BSE bhavcopy and marked "BSE" in the
-dashboard and alerts. Re-run the command monthly and after each rebalance: additions and removals are
-kept in `universe_history` (visible on the Status page). The scheduler sends a monthly reminder.
+This downloads the current BSE 500 list from bseindia.com (BSE's own website API, the same data
+behind https://www.bseindia.com/sensex/code/17), saves it to `data/bse500.csv` and imports it.
+It prints how many stocks it found; expect about 500. A stock that closed exactly unchanged that
+day can be missed, so if the count is a little short, run it again on another day.
+
+If BSE's site is down, you can import a list you downloaded yourself instead:
+`python3 -m avwap universe ~/Downloads/<file>` (CSV/Excel with a scrip code or ISIN column; title
+rows are skipped).
+
+Scrip codes are mapped to ISINs (from BSE's securities list, or the latest BSE bhavcopy), and ISINs
+to NSE symbols using NSE's `EQUITY_L.csv`. Stocks not listed on NSE are logged, shown as
+`BSE-<scrip code>`, priced from the BSE bhavcopy and marked "BSE" in the dashboard and alerts.
+The scheduler refreshes the list on the 1st of every month and tells you on Telegram; additions and
+removals are kept in `universe_history` (visible on the Status page).
 
 ### 3. Backfill history
 

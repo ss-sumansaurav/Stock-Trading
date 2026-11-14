@@ -96,9 +96,19 @@ def start_scheduler(cfg: dict):
     sch = BlockingScheduler(timezone=IST)
     sch.add_job(lambda: daily_job(cfg), "cron", day_of_week="mon-fri", hour=h, minute=m,
                 id="daily", misfire_grace_time=3600, coalesce=True)
-    sch.add_job(lambda: telegram.send(
-        "🗓️ Monthly reminder: download the latest BSE 500 list from bseindia.com/sensex/code/17 and run "
-        "<code>python -m avwap universe &lt;file&gt;</code> (also after each index rebalance)."),
-        "cron", day=1, hour=9, minute=0, id="universe_reminder")
+    sch.add_job(lambda: monthly_universe(cfg), "cron", day=1, hour=9, minute=0, id="universe_refresh")
     log.info("Scheduler started: daily scan at %02d:%02d IST on weekdays", h, m)
     sch.start()
+
+
+def monthly_universe(cfg: dict):
+    """Refresh the BSE 500 list from bseindia.com; ask for a manual import if that fails."""
+    from .data.bse_api import fetch_bse500
+    from .data.pipeline import import_universe
+    try:
+        fetch_bse500(cfg["paths"]["universe_csv"])
+        res = import_universe(open_db(cfg), cfg["paths"]["universe_csv"], NSESession())
+        telegram.send(f"🗓️ BSE 500 list refreshed: {res['total']} stocks "
+                      f"({res['added']} added, {res['removed']} removed).")
+    except Exception as e:
+        telegram.send_error(f"Monthly BSE 500 refresh failed ({e}). Run: python3 -m avwap universe")

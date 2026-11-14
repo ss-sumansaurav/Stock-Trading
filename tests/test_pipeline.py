@@ -89,3 +89,38 @@ def test_universe_from_bse_download_without_isin(db, tmp_path, monkeypatch):
     assert u.set_index("bse_code").loc["532755", "nse_symbol"] == "TECHM"
     assert u.set_index("bse_code").loc["999999", "nse_symbol"] == "BSE-999999"
     assert u.set_index("bse_code").loc["532210", "sector"] == "Banks"
+
+
+def test_fetch_bse500_from_api(db, tmp_path, monkeypatch):
+    from avwap.data import bse_api, pipeline
+
+    def fake_get(s, path, params, tries=3):
+        if path == "MktRGainerLoserData/w":
+            if params["IndxGrp"] != "all":
+                return {"Table": []}
+            if params["GLtype"] == "gainer":
+                return {"Table": [
+                    {"scrip_cd": 532755, "LONG_NAME": "Tech Mahindra Ltd", "index_code": "|BSE 500|,|BSE IT|"},
+                    {"scrip_cd": 111111, "LONG_NAME": "Not In Index", "index_code": "|BSE SmallCap|"}]}
+            return {"Table": [{"scrip_cd": 532210, "LONG_NAME": "City Union Bank", "index_code": "|S&P BSE 500|"}]
+                    + [{"scrip_cd": 600000 + i, "LONG_NAME": f"Co {i}", "index_code": "|BSE 500|"} for i in range(60)]}
+        if path == "ListofScripData/w" and params["Group"] == "A":
+            return [{"SCRIP_CD": "532755", "Scrip_Name": "Tech Mahindra Ltd", "ISIN_NUMBER": "INE669C01036",
+                     "INDUSTRY": "IT - Software", "scrip_id": "TECHM"},
+                    {"SCRIP_CD": "532210", "Scrip_Name": "City Union Bank", "ISIN_NUMBER": "INE491A01021",
+                     "INDUSTRY": "Banks", "scrip_id": "CUB"}]
+        return []
+    monkeypatch.setattr(bse_api, "_get", fake_get)
+    out = tmp_path / "bse500.csv"
+    df = bse_api.fetch_bse500(str(out))
+    assert len(df) == 62 and "111111" not in set(df["Scrip Code"])
+    # rows without ISIN fall back to the bhavcopy map
+    monkeypatch.setattr(pipeline, "fetch_bse_code_map", lambda s: pd.DataFrame({
+        "bse_code": [str(600000 + i) for i in range(60)], "bse_id": [f"C{i}" for i in range(60)],
+        "isin": [f"INE{i:09d}" for i in range(60)]}))
+    monkeypatch.setattr(pipeline, "fetch_nse_equity_list", lambda s: pd.DataFrame({
+        "nse_symbol": ["TECHM", "CUB"], "isin": ["INE669C01036", "INE491A01021"], "series": ["EQ", "EQ"]}))
+    res = pipeline.import_universe(db, str(out), sess=object())
+    assert res["total"] == 62
+    u = db.q("SELECT nse_symbol, sector FROM universe WHERE bse_code='532755'")
+    assert u["nse_symbol"].iat[0] == "TECHM" and u["sector"].iat[0] == "IT - Software"
