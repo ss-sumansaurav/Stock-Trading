@@ -137,3 +137,23 @@ def fetch_nse_equity_list(sess: NSESession) -> pd.DataFrame:
     return pd.DataFrame({"nse_symbol": df["SYMBOL"].str.strip(),
                          "isin": df["ISIN NUMBER"].str.strip(),
                          "series": df["SERIES"].str.strip()})
+
+
+def fetch_bse_code_map(sess: NSESession, days_back: int = 10) -> pd.DataFrame:
+    """Scrip code / BSE scrip id -> ISIN, from the most recent BSE bhavcopy available."""
+    from datetime import timedelta
+    d = date.today()
+    last = None
+    for _ in range(days_back):
+        if d.weekday() < 5:
+            try:
+                raw = _read_csv_maybe_zip(sess.get(BSE_UDIFF.format(d=d)))
+                return pd.DataFrame({
+                    "bse_code": raw["FinInstrmId"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
+                    "bse_id": raw["TckrSymb"].astype(str).str.strip().str.upper(),
+                    "isin": raw["ISIN"].astype(str).str.strip(),
+                })
+            except Exception as e:
+                last = e
+        d -= timedelta(days=1)
+    raise RuntimeError(f"Could not download a recent BSE bhavcopy to map scrip codes to ISINs: {last}")

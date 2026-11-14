@@ -1,7 +1,7 @@
 """Command line: python -m avwap <command>
 
   init                         create the database
-  universe FILE                import BSE 500 constituents (CSV/XLSX with ISIN column)
+  universe FILE                import BSE 500 constituents (bseindia.com download, CSV/XLSX)
   backfill [--years N]         download N years of NSE bhavcopies (+ corporate actions)
   scan [--date YYYY-MM-DD]     run the scan on data already loaded
   daily [--date D] [--no-wait] full evening job: download, scan, Telegram, backup

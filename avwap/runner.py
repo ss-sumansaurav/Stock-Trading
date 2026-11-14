@@ -97,7 +97,7 @@ def start_scheduler(cfg: dict):
     sch.add_job(lambda: daily_job(cfg), "cron", day_of_week="mon-fri", hour=h, minute=m,
                 id="daily", misfire_grace_time=3600, coalesce=True)
     sch.add_job(lambda: telegram.send(
-        "🗓️ Monthly reminder: download the latest BSE 500 constituents and run "
+        "🗓️ Monthly reminder: download the latest BSE 500 list from bseindia.com/sensex/code/17 and run "
         "<code>python -m avwap universe &lt;file&gt;</code> (also after each index rebalance)."),
         "cron", day=1, hour=9, minute=0, id="universe_reminder")
     log.info("Scheduler started: daily scan at %02d:%02d IST on weekdays", h, m)
