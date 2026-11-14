@@ -78,3 +78,15 @@ def test_blocked_message():
     import requests
     from avwap.runner import _describe
     assert "blocks cloud servers" in _describe(requests.HTTPError("403 Client Error: Forbidden"))
+
+
+def test_github_error_is_readable(monkeypatch):
+    import requests
+    monkeypatch.setenv("GITHUB_REPO", "me/repo")
+    monkeypatch.setenv("GITHUB_TOKEN", "github_pat_x")
+    r = requests.Response()
+    r.status_code = 403
+    r._content = b'{"message": "Resource not accessible by personal access token"}'
+    with pytest.raises(cloud.GitHubError) as e:
+        cloud._check(r, "creating the 'data' release")
+    assert "Resource not accessible" in str(e.value) and "Only select repositories" in str(e.value)

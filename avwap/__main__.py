@@ -42,7 +42,7 @@ def main(argv=None):
     sub.add_parser("demo")
     sub.add_parser("cloud-upload")
     cr = sub.add_parser("cloud-run")
-    cr.add_argument("--action", default="daily", choices=["daily", "backfill", "telegram-test"])
+    cr.add_argument("--action", default="daily", choices=["daily", "backfill", "universe", "telegram-test"])
     cr.add_argument("--years", type=float)
     p = sub.add_parser("position"); p.add_argument("action", choices=["add", "list", "close"])
     p.add_argument("args", nargs="*")
@@ -100,7 +100,11 @@ def main(argv=None):
             print("Add APP_PASSWORD, GITHUB_REPO and GITHUB_TOKEN to .env first (see README, 'Hosting').")
             return 1
         db.conn.commit()
-        cloud.push_db(cfg["paths"]["db"])
+        try:
+            cloud.push_db(cfg["paths"]["db"])
+        except cloud.GitHubError as e:
+            print(e)
+            return 1
         print("Uploaded. The hosted scanner and dashboard will use this data.")
     elif a.cmd == "cloud-run":
         from .cloud_run import cloud_run

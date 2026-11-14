@@ -101,6 +101,38 @@ def decrypt(blob: bytes) -> bytes:
 
 
 # ------------------------------------------------------------------ release assets
+class GitHubError(RuntimeError):
+    pass
+
+
+def _check(r: requests.Response, what: str):
+    """Raise a readable error with GitHub's own message and the usual fixes."""
+    if r.ok:
+        return
+    try:
+        msg = r.json().get("message", r.text[:300])
+    except ValueError:
+        msg = r.text[:300]
+    hint = ""
+    if r.status_code in (401, 403, 404):
+        tok = _env("GITHUB_TOKEN") or ""
+        hint = (
+            "\n\nGitHub refused the token. Check, at github.com > Settings > Developer settings > "
+            "Personal access tokens > Fine-grained tokens > your token:\n"
+            f"  1. 'Repository access' is 'Only select repositories' with {repo()} selected "
+            "(the default 'Public repositories' choice is read-only).\n"
+            "  2. 'Repository permissions' > 'Contents' is 'Read and write'.\n"
+            "  3. 'Resource owner' is your own account.\n"
+            "  4. GITHUB_TOKEN in .env is that token's value (starts with github_pat_), "
+            "and the token isn't expired."
+        )
+        if tok and not tok.startswith(("github_pat_", "ghp_", "ghs_")):
+            hint += f"\n  The token in use starts with '{tok[:4]}…', which doesn't look like a GitHub token."
+        if os.environ.get("GITHUB_TOKEN") and not tok.startswith("github_pat_"):
+            hint += "\n  Note: a GITHUB_TOKEN set in your shell overrides the one in .env."
+    raise GitHubError(f"GitHub said {r.status_code} while {what}: {msg}{hint}")
+
+
 def _release(create: bool = False) -> dict | None:
     r = requests.get(f"https://api.github.com/repos/{repo()}/releases/tags/{TAG}", headers=_headers(), timeout=30)
     if r.status_code == 200:
@@ -109,11 +141,11 @@ def _release(create: bool = False) -> dict | None:
         r = requests.post(f"https://api.github.com/repos/{repo()}/releases", headers=_headers(), timeout=30,
                           json={"tag_name": TAG, "name": "Scanner data (encrypted)", "prerelease": True,
                                 "body": "Encrypted data store for the AVWAP scanner. Updated automatically."})
-        r.raise_for_status()
+        _check(r, "creating the 'data' release")
         return r.json()
     if r.status_code == 404:
         return None
-    r.raise_for_status()
+    _check(r, "reading the 'data' release")
 
 
 def download(name: str) -> bytes | None:
@@ -123,7 +155,7 @@ def download(name: str) -> bytes | None:
     for a in rel.get("assets", []):
         if a["name"] == name:
             r = requests.get(a["url"], headers=_headers(json_api=False), timeout=300)
-            r.raise_for_status()
+            _check(r, f"downloading {name}")
             return r.content
     return None
 
@@ -132,12 +164,12 @@ def upload(name: str, data: bytes):
     rel = _release(create=True)
     for a in rel.get("assets", []):
         if a["name"] == name:
-            requests.delete(a["url"], headers=_headers(), timeout=30).raise_for_status()
+            _check(requests.delete(a["url"], headers=_headers(), timeout=30), f"replacing {name}")
     url = f"https://uploads.github.com/repos/{repo()}/releases/{rel['id']}/assets?name={name}"
     h = _headers()
     h["Content-Type"] = "application/octet-stream"
     r = requests.post(url, headers=h, data=data, timeout=600)
-    r.raise_for_status()
+    _check(r, f"uploading {name}")
     log.info("Uploaded %s (%.1f MB)", name, len(data) / 1e6)
 
 
