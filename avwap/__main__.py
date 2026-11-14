@@ -100,7 +100,11 @@ def main(argv=None):
             print("Add APP_PASSWORD, GITHUB_REPO and GITHUB_TOKEN to .env first (see README, 'Hosting').")
             return 1
         db.conn.commit()
-        cloud.push_db(cfg["paths"]["db"])
+        try:
+            cloud.push_db(cfg["paths"]["db"])
+        except cloud.GitHubError as e:
+            print(e)
+            return 1
         print("Uploaded. The hosted scanner and dashboard will use this data.")
     elif a.cmd == "cloud-run":
         from .cloud_run import cloud_run
