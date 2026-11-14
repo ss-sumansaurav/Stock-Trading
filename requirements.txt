@@ -1,0 +1,9 @@
+pandas>=2.1
+numpy>=1.26
+requests>=2.31
+PyYAML>=6.0
+python-dotenv>=1.0
+APScheduler>=3.10,<4
+streamlit>=1.36
+plotly>=5.20
+pytest>=8.0

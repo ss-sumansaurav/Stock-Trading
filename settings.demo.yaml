@@ -1,0 +1,54 @@
+# Demo settings: same as settings.yaml but a separate database.
+# AVWAP Scanner settings. Every threshold from the brief lives here.
+# Secrets (Telegram token / chat id) do NOT go here: put them in .env.
+
+paths:
+  db: data/demo.sqlite           # DEMO database with synthetic data
+  backup_dir: data/backups       # daily copy of the database
+  universe_csv: data/bse500.csv  # BSE 500 constituents (see README)
+
+data:
+  backfill_years: 3
+  series: [EQ, BE]
+  download_time: "19:00"         # IST, first attempt
+  retry_every_minutes: 30
+  give_up_time: "22:00"          # IST, last attempt before error alert
+  request_timeout: 30
+  # Extra holidays (YYYY-MM-DD) in case the NSE holiday API can't be reached.
+  extra_holidays: []
+
+indicators:
+  atr_period: 14
+  rsi_period: 14
+  ema_period: 20
+  sma_period: 10
+  avg_vol_short: 20
+  avg_vol_long: 50
+
+anchors:
+  lookback_days: 252             # ~12 months of trading days
+  swing_bars: 5                  # bars on each side of a swing high/low
+  swing_min_atr: 2.0             # min swing from previous pivot, in ATR(14)
+  volume_anchor_mult: 3.0        # volume >= X * 50-day average
+  breakout_lookback: 20          # close above prior N-day high
+  gap_min_atr: 1.0               # gap beyond previous range, in ATR(14)
+  breakout_recent_days: 60       # primary rule 2 window
+  max_auto_anchors: 12           # keep the most recent N auto anchors (plus major low/top)
+
+clusters:
+  max_spread_pct: 1.5            # AVWAPs within 1.5% of each other
+
+signals:
+  pullback_pct: 0.5              # low within 0.5% of primary AVWAP
+  all_below_lookback: 20         # "first time in 20 days"
+  supply_test_pct: 2.0           # close within 2% below major high / overhead cluster
+  volume_confirm_mult: 1.5       # volume >= 1.5 * 20-day average
+  # Extension and supply test describe a state; true = alert only on the day it starts.
+  only_new_events: true
+
+alerts:
+  send_time: "20:00"             # IST target for the summary
+  max_lines_per_section: 25
+  top_clusters: 10
+  # Public URL of your dashboard, used for chart links in Telegram.
+  dashboard_url: "http://localhost:8501"
