@@ -31,7 +31,15 @@ st.set_page_config(page_title="AVWAP Scanner", page_icon="📈", layout="wide",
                    initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
-.block-container {padding-top: 1.2rem; padding-left: 0.8rem; padding-right: 0.8rem; max-width: 1400px;}
+.block-container {padding-top: 3.6rem; padding-left: 0.8rem; padding-right: 0.8rem; max-width: 1400px;}
+/* page switcher: full width, large tap targets, never hidden under the header */
+div[data-testid="stButtonGroup"] {width: 100%;}
+div[data-testid="stButtonGroup"] > div {display: flex; width: 100%; flex-wrap: nowrap;}
+div[data-testid="stButtonGroup"] button {flex: 1 1 0; min-height: 2.6rem; font-weight: 600;}
+@media (max-width: 640px) {
+  .block-container {padding-top: 3.2rem;}
+  div[data-testid="stButtonGroup"] button {padding-left: 0.2rem; padding-right: 0.2rem; font-size: 0.9rem;}
+}
 div[data-testid="stMetricValue"] {font-size: 1.25rem;}
 @media (max-width: 640px) { h1 {font-size: 1.5rem;} }
 </style>""", unsafe_allow_html=True)
@@ -100,15 +108,21 @@ if "page" not in st.session_state:
     st.session_state.page = default_page if default_page in PAGES else "Scan"
 if "symbol" not in st.session_state and "symbol" in qp:
     st.session_state.symbol = qp["symbol"]
+if "_goto" in st.session_state:  # set by a row tap on the Scan page
+    st.session_state.page = st.session_state.pop("_goto")
 
-page = st.segmented_control("Page", PAGES, key="page", label_visibility="collapsed") or "Scan"
+page = st.segmented_control("Page", PAGES, key="page", label_visibility="collapsed",
+                            width="stretch") or "Scan"
 
 
 def latest_scan() -> tuple[str | None, pd.DataFrame]:
     d = db.q("SELECT MAX(date) AS d FROM scan_results")["d"].iat[0]
     if not d:
         return None, pd.DataFrame()
-    return d, db.q("SELECT * FROM scan_results WHERE date=?", (d,))
+    df = db.q("SELECT s.*, COALESCE(NULLIF(TRIM(u.sector), ''), 'Other') AS sector_now "
+              "FROM scan_results s LEFT JOIN universe u ON u.nse_symbol = s.symbol WHERE s.date=?", (d,))
+    df["sector"] = df["sector_now"].fillna("Other")
+    return d, df
 
 
 def symbols() -> list[str]:
@@ -117,7 +131,7 @@ def symbols() -> list[str]:
 
 def open_chart(sym: str):
     st.session_state.symbol = sym
-    st.session_state.page = "Chart"
+    st.session_state._goto = "Chart"
     st.query_params["symbol"] = sym
 
 
@@ -130,10 +144,11 @@ def page_scan():
         return
     df["signals"] = df["signals"].fillna("")
     all_sigs = sorted({s.replace(" (vol)", "") for x in df["signals"] for s in x.split(", ") if s})
-    with st.expander("Filters", expanded=False):
-        c1, c2 = st.columns(2)
-        sig = c1.multiselect("Signal", all_sigs)
-        sectors = c2.multiselect("Sector", sorted(df["sector"].dropna().unique()))
+    c1, c2 = st.columns(2)
+    sectors = c1.multiselect("Sector", sorted(df["sector"].unique(), key=lambda x: (x == "Other", x)),
+                             placeholder="All sectors")
+    sig = c2.multiselect("Signal", all_sigs, placeholder="All signals")
+    with st.expander("More filters", expanded=False):
         lo, hi = float(np.nanmin(df["primary_dist_pct"])), float(np.nanmax(df["primary_dist_pct"]))
         lo, hi = np.floor(lo), np.ceil(hi)
         rng = st.slider("% distance from primary AVWAP", lo, hi, (lo, hi))

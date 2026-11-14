@@ -123,4 +123,4 @@ def test_fetch_bse500_from_api(db, tmp_path, monkeypatch):
     res = pipeline.import_universe(db, str(out), sess=object())
     assert res["total"] == 62
     u = db.q("SELECT nse_symbol, sector FROM universe WHERE bse_code='532755'")
-    assert u["nse_symbol"].iat[0] == "TECHM" and u["sector"].iat[0] == "IT - Software"
+    assert u["nse_symbol"].iat[0] == "TECHM" and u["sector"].iat[0] == "IT"

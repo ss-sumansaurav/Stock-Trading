@@ -42,7 +42,7 @@ def main(argv=None):
     sub.add_parser("demo")
     sub.add_parser("cloud-upload")
     cr = sub.add_parser("cloud-run")
-    cr.add_argument("--action", default="daily", choices=["daily", "backfill", "telegram-test"])
+    cr.add_argument("--action", default="daily", choices=["daily", "backfill", "universe", "telegram-test"])
     cr.add_argument("--years", type=float)
     p = sub.add_parser("position"); p.add_argument("action", choices=["add", "list", "close"])
     p.add_argument("args", nargs="*")

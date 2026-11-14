@@ -54,15 +54,51 @@ def _rows(js):
     return js or []
 
 
-def bse500_members(s) -> dict[str, str]:
-    """scrip code -> name, for stocks that are in the BSE 500."""
+# BSE sectoral indices -> sector name shown on the dashboard (first match wins).
+SECTOR_INDICES = [
+    ("bse bankex", "Banks"), ("bse it", "IT"), ("bse information technology", "IT"),
+    ("bse healthcare", "Healthcare"), ("bse fmcg", "FMCG"), ("bse fast moving consumer goods", "FMCG"),
+    ("bse auto", "Auto"), ("bse metal", "Metals"), ("bse oil & gas", "Oil & Gas"),
+    ("bse power", "Power"), ("bse realty", "Realty"), ("bse capital goods", "Capital Goods"),
+    ("bse consumer durables", "Consumer Durables"), ("bse telecom", "Telecom"),
+    ("bse telecommunication", "Telecom"), ("bse financial services", "Financials"),
+    ("bse finance", "Financials"), ("bse energy", "Energy"), ("bse basic materials", "Basic Materials"),
+    ("bse industrials", "Industrials"), ("bse consumer discretionary", "Consumer Discretionary"),
+    ("bse consumer discretionary goods & services", "Consumer Discretionary"),
+    ("bse utilities", "Utilities"), ("bse commodities", "Basic Materials"),
+]
+
+
+def _norm_index(name: str) -> str:
+    n = name.strip().strip("|").strip().lower().replace("s&p ", "")
+    return n[:-6] if n.endswith(" index") else n
+
+
+def sector_from_indices(index_code: str) -> str | None:
+    """Pick a sector from the list of indices a stock belongs to, e.g. '|BSE 500|,|BSE IT|'."""
+    names = {_norm_index(x) for x in str(index_code or "").split(",") if x.strip()}
+    for idx, sector in SECTOR_INDICES:
+        if idx in names:
+            return sector
+    return None
+
+
+def bse500_members(s, sectors: dict | None = None) -> dict[str, str]:
+    """scrip code -> name, for stocks that are in the BSE 500. Fills `sectors` (code -> sector)."""
     out: dict[str, str] = {}
+    sectors = sectors if sectors is not None else {}
+
+    def note(r):
+        sec = sector_from_indices(r.get("index_code", ""))
+        if sec:
+            sectors[str(r["scrip_cd"])] = sec
     for gl in ("gainer", "loser"):
         try:
             for r in _rows(_get(s, "MktRGainerLoserData/w",
                                 {"GLtype": gl, "IndxGrp": "all", "IndxGrpval": "", "orderby": "all"})):
                 if _IN_500.search(str(r.get("index_code", ""))):
                     out[str(r["scrip_cd"])] = r.get("LONG_NAME") or r.get("scripname", "")
+                    note(r)
         except RuntimeError as e:
             log.warning("%s", e)
         for name in INDEX_NAMES:
@@ -70,6 +106,7 @@ def bse500_members(s) -> dict[str, str]:
                 for r in _rows(_get(s, "MktRGainerLoserData/w",
                                     {"GLtype": gl, "IndxGrp": "index", "IndxGrpval": name, "orderby": "all"})):
                     out[str(r["scrip_cd"])] = r.get("LONG_NAME") or r.get("scripname", "")
+                    note(r)
             except RuntimeError as e:
                 log.warning("%s", e)
     return out
@@ -100,13 +137,17 @@ def security_details(s, codes) -> pd.DataFrame:
 def fetch_bse500(out_csv: str) -> pd.DataFrame:
     """Download the BSE 500 list and save it as a CSV the universe importer reads."""
     s = _session()
-    members = bse500_members(s)
+    sectors: dict[str, str] = {}
+    members = bse500_members(s, sectors)
     if len(members) < 50:
         raise RuntimeError(f"BSE returned only {len(members)} BSE 500 members; the site may be down "
                            "or its API changed. Try again later, or import a downloaded file instead.")
     det = security_details(s, members.keys())
     df = pd.DataFrame({"Scrip Code": list(members), "Company": list(members.values())})
     df = df.merge(det.drop(columns=["Company"]), on="Scrip Code", how="left")
+    # Sector: BSE sectoral index membership, else BSE's industry, else "Other".
+    ind = df["Industry"].where(df["Industry"].notna() & (df["Industry"].astype(str).str.strip() != ""))
+    df["Sector"] = df["Scrip Code"].map(sectors).fillna(ind).fillna("Other")
     df.to_csv(out_csv, index=False)
     log.info("Fetched %d BSE 500 members (%d with ISIN) -> %s", len(df), df["ISIN"].notna().sum(), out_csv)
     return df

@@ -11,7 +11,7 @@ on:
       action:
         description: "What to run"
         type: choice
-        options: [daily, backfill, telegram-test]
+        options: [daily, backfill, universe, telegram-test]
         default: daily
 
 permissions:

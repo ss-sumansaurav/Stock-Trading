@@ -18,6 +18,30 @@ def cloud_run(cfg: dict, action: str = "daily", years: float | None = None) -> i
         ok = telegram.send("✅ AVWAP scanner on GitHub Actions is connected to this channel.")
         return 0 if ok else 1
 
+    if action == "universe":
+        from .data.bse_api import fetch_bse500
+        from .data.nse import NSESession
+        from .data.pipeline import import_universe
+        from .db import open_db
+        if not have_data:
+            log.error("No data stored in GitHub yet")
+            return 1
+        db = open_db(cfg)
+        try:
+            fetch_bse500(cfg["paths"]["universe_csv"])
+            res = import_universe(db, cfg["paths"]["universe_csv"], NSESession(cfg["data"]["request_timeout"]))
+            print(res)
+            telegram.send(f"🗓️ BSE 500 list refreshed: {res['total']} stocks "
+                          f"({res['added']} added, {res['removed']} removed).")
+        except Exception as e:
+            from .runner import _describe
+            telegram.send_error(f"BSE 500 refresh on GitHub failed: {_describe(e)}")
+            return 1
+        finally:
+            db.conn.close()
+        cloud.push_db(db_path)
+        return 0
+
     if action == "backfill":
         from .data.nse import NSESession
         from .data.pipeline import (backfill, import_universe, refresh_corporate_actions,
