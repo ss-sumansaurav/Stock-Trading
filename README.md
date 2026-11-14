@@ -44,18 +44,20 @@ python -m avwap init
 
 ### 2. BSE 500 universe
 
-Download the current S&P BSE 500 constituents (Excel/CSV) from asiaindex.co.in or bseindia.com.
-The file needs an **ISIN** column; company, scrip code, industry/sector and symbol columns are picked
-up if present. Then:
+1. Open the BSE 500 index page on BSE: https://www.bseindia.com/sensex/code/17
+2. Download the list of stocks in the index with the download (CSV/Excel) icon on that page.
+3. Import it:
 
 ```bash
-python -m avwap universe path/to/bse500.csv
+python3 -m avwap universe ~/Downloads/<downloaded file>
 ```
 
-ISINs are mapped to NSE symbols using NSE's `EQUITY_L.csv`. Stocks not listed on NSE are logged,
-shown as `BSE-<scrip code>`, priced from the BSE bhavcopy and marked "BSE" in the dashboard and alerts.
-Re-run the command monthly and after each rebalance: additions and removals are kept in
-`universe_history` (visible on the Status page). The scheduler sends a monthly reminder.
+The importer finds the header row itself and reads the scrip code, name, scrip ID and industry
+columns. If the file has no ISINs (BSE's download usually doesn't), scrip codes are mapped to ISINs
+using the latest BSE bhavcopy, and ISINs to NSE symbols using NSE's `EQUITY_L.csv`. Stocks not listed
+on NSE are logged, shown as `BSE-<scrip code>`, priced from the BSE bhavcopy and marked "BSE" in the
+dashboard and alerts. Re-run the command monthly and after each rebalance: additions and removals are
+kept in `universe_history` (visible on the Status page). The scheduler sends a monthly reminder.
 
 ### 3. Backfill history
 

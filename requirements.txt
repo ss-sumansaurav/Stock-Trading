@@ -7,3 +7,4 @@ APScheduler>=3.10,<4
 streamlit>=1.36
 plotly>=5.20
 pytest>=8.0
+openpyxl>=3.1

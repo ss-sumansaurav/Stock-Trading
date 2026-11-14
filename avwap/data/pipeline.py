@@ -8,46 +8,87 @@ import pandas as pd
 
 from ..db import DB
 from .corporate_actions import adjust_prices, parse_subject
-from .nse import (NSE_BOARD_MEETINGS, NSE_CORP_ACTIONS, NSE_HOLIDAYS, NotPublished, NSESession,
+from .nse import (NSE_BOARD_MEETINGS, fetch_bse_code_map, NSE_CORP_ACTIONS, NSE_HOLIDAYS, NotPublished, NSESession,
                   fetch_bse_bhavcopy, fetch_nse_bhavcopy, fetch_nse_equity_list)
 
 log = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------ universe
-def _pick(cols, *names):
-    low = {c.lower().strip(): c for c in cols}
+def _pick(cols, *names, exclude=()):
+    low = {str(c).lower().strip(): c for c in cols}
     for n in names:
         for lc, c in low.items():
-            if n in lc:
+            if n in lc and not any(x in lc for x in exclude):
                 return c
     return None
 
 
-def import_universe(db: DB, csv_path: str, sess: NSESession | None = None) -> dict:
-    """Load a BSE 500 constituents file (CSV or Excel from asiaindex.com / bseindia.com).
-
-    Needs an ISIN column; company, scrip code, sector/industry and symbol are optional.
-    Maps ISIN -> NSE symbol via NSE's EQUITY_L.csv. Keeps history of additions/removals.
-    """
-    if csv_path.lower().endswith((".xls", ".xlsx")):
-        src = pd.read_excel(csv_path)
+def _read_table(path: str) -> pd.DataFrame:
+    """Read CSV/Excel and find the real header row (BSE downloads sometimes have title rows)."""
+    if path.lower().endswith((".xls", ".xlsx")):
+        raw = pd.read_excel(path, header=None, dtype=str)
     else:
-        src = pd.read_csv(csv_path)
+        import csv
+        with open(path, newline="", encoding="utf-8-sig", errors="replace") as fh:
+            rows = list(csv.reader(fh))
+        width = max((len(r) for r in rows), default=0)
+        raw = pd.DataFrame([r + [None] * (width - len(r)) for r in rows])
+    for i in range(min(len(raw), 20)):
+        cells = [str(x).lower() for x in raw.iloc[i].tolist()]
+        if any("isin" in c or "code" in c for c in cells):
+            df = raw.iloc[i + 1:].copy()
+            df.columns = [str(x).strip() for x in raw.iloc[i].tolist()]
+            return df.dropna(how="all").reset_index(drop=True)
+    raise ValueError("Couldn't find a header row with a scrip code or ISIN column in " + path)
+
+
+def _clean(s: pd.Series) -> pd.Series:
+    return s.astype(str).str.strip().str.replace(r"\.0$", "", regex=True).replace({"nan": "", "None": ""})
+
+
+def import_universe(db: DB, csv_path: str, sess: NSESession | None = None) -> dict:
+    """Load the BSE 500 constituents file downloaded from bseindia.com (index page, code 17).
+
+    Works with a scrip-code column (the BSE download) or an ISIN column. Scrip codes are
+    mapped to ISINs with the latest BSE bhavcopy, and ISINs to NSE symbols with NSE's
+    EQUITY_L.csv. Keeps history of additions/removals.
+    """
+    src = _read_table(csv_path)
     c_isin = _pick(src.columns, "isin")
-    if not c_isin:
-        raise ValueError("Universe file needs an ISIN column")
-    c_name = _pick(src.columns, "company", "name", "security")
-    c_code = _pick(src.columns, "scrip code", "security code", "code")
+    c_code = _pick(src.columns, "scrip code", "security code", "scripcode", "code", exclude=("isin",))
+    c_name = _pick(src.columns, "company", "scrip name", "security name", "name", exclude=("code", "isin", "id"))
     c_sec = _pick(src.columns, "sector", "industry")
-    c_sym = _pick(src.columns, "nse symbol", "symbol", "ticker")
+    c_sym = _pick(src.columns, "nse symbol", "symbol", "scrip id", "security id", "ticker", exclude=("code",))
+    if not c_isin and not c_code:
+        raise ValueError(f"Universe file needs a scrip code or ISIN column; found {list(src.columns)}")
     new = pd.DataFrame({
-        "isin": src[c_isin].astype(str).str.strip(),
-        "company": src[c_name].astype(str).str.strip() if c_name else "",
-        "bse_code": src[c_code].astype(str).str.strip() if c_code else "",
-        "sector": src[c_sec].astype(str).str.strip() if c_sec else "",
-        "nse_symbol": src[c_sym].astype(str).str.strip() if c_sym else None,
-    }).drop_duplicates("isin")
+        "isin": _clean(src[c_isin]) if c_isin else "",
+        "company": _clean(src[c_name]) if c_name else "",
+        "bse_code": _clean(src[c_code]) if c_code else "",
+        "sector": _clean(src[c_sec]) if c_sec else "",
+        "nse_symbol": _clean(src[c_sym]).str.upper() if c_sym else "",
+    })
+    new = new[(new["isin"] != "") | (new["bse_code"].str.fullmatch(r"\d+"))].reset_index(drop=True)
+
+    if (new["isin"] == "").any():
+        if sess is None:
+            raise ValueError("File has no ISINs; a network session is needed to map scrip codes")
+        bm = fetch_bse_code_map(sess)
+        by_code = dict(zip(bm["bse_code"], bm["isin"]))
+        by_id = dict(zip(bm["bse_id"], bm["isin"]))
+        miss = new["isin"] == ""
+        new.loc[miss, "isin"] = new.loc[miss, "bse_code"].map(by_code).fillna("")
+        miss = new["isin"] == ""
+        if c_sym:
+            new.loc[miss, "isin"] = new.loc[miss, "nse_symbol"].map(by_id).fillna("")
+        unmapped = new[new["isin"] == ""]
+        for r in unmapped.itertuples():
+            log.warning("No ISIN found for scrip code %s (%s); skipped", r.bse_code, r.company)
+        new = new[new["isin"] != ""]
+    if not c_code:
+        new["bse_code"] = ""
+    new = new.drop_duplicates("isin")
 
     nse = None
     if sess is not None:
@@ -57,10 +98,10 @@ def import_universe(db: DB, csv_path: str, sess: NSESession | None = None) -> di
             log.warning("Could not fetch NSE equity list (%s); using symbols from the file", e)
     if nse is not None:
         m = dict(zip(nse["isin"], nse["nse_symbol"]))
-        new["nse_symbol"] = new["isin"].map(m).fillna(new["nse_symbol"])
+        new["nse_symbol"] = new["isin"].map(m).fillna("")
         new["exchange"] = new["isin"].map(lambda i: "NSE" if i in m else "BSE")
     else:
-        new["exchange"] = new["nse_symbol"].map(lambda s: "NSE" if s and s != "nan" else "BSE")
+        new["exchange"] = new["nse_symbol"].map(lambda s: "NSE" if s else "BSE")
     # BSE-only stocks are shown with a BSE- prefix on their scrip code.
     bse_only = new["exchange"] == "BSE"
     new.loc[bse_only, "nse_symbol"] = "BSE-" + new.loc[bse_only, "bse_code"].astype(str)

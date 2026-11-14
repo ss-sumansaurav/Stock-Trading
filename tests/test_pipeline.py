@@ -65,3 +65,27 @@ def test_holiday_does_nothing(monkeypatch, tmp_path, cfg):
     assert runner.daily_job(cfg, date(2026, 11, 13)) == "holiday"
     assert runner.daily_job(cfg, date(2026, 11, 14)) == "holiday"  # Saturday
     assert not sent
+
+
+def test_universe_from_bse_download_without_isin(db, tmp_path, monkeypatch):
+    from avwap.data import pipeline
+    f = tmp_path / "bse500.csv"
+    f.write_text("BSE 500 constituents\n\n"
+                 "Scrip Code,Scrip Name,Scrip ID,Industry\n"
+                 "532755,TECH MAHINDRA LTD.,TECHM,IT - Software\n"
+                 "532210,CITY UNION BANK LTD.,CUB,Banks\n"
+                 "530135,OPTIEMUS INFRACOM LTD.,OPTIEMUS,Telecom\n"
+                 "999999,BSE ONLY LTD.,BSEONLY,Misc\n")
+    monkeypatch.setattr(pipeline, "fetch_bse_code_map", lambda s: pd.DataFrame({
+        "bse_code": ["532755", "532210", "530135", "999999"],
+        "bse_id": ["TECHM", "CUB", "OPTIEMUS", "BSEONLY"],
+        "isin": ["INE669C01036", "INE491A01021", "INE350C01017", "INE000X00000"]}))
+    monkeypatch.setattr(pipeline, "fetch_nse_equity_list", lambda s: pd.DataFrame({
+        "nse_symbol": ["TECHM", "CUB", "OPTIEMUS"],
+        "isin": ["INE669C01036", "INE491A01021", "INE350C01017"], "series": ["EQ"] * 3}))
+    res = pipeline.import_universe(db, str(f), sess=object())
+    assert res == {"total": 4, "added": 4, "removed": 0, "bse_only": 1}
+    u = db.q("SELECT isin, nse_symbol, bse_code, sector, exchange FROM universe ORDER BY bse_code")
+    assert u.set_index("bse_code").loc["532755", "nse_symbol"] == "TECHM"
+    assert u.set_index("bse_code").loc["999999", "nse_symbol"] == "BSE-999999"
+    assert u.set_index("bse_code").loc["532210", "sector"] == "Banks"
