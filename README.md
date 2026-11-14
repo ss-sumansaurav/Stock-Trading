@@ -127,6 +127,41 @@ AVWAP_SETTINGS=settings.demo.yaml streamlit run dashboard/app.py
 This loads 40 synthetic stocks (one with a 1:5 split, one BSE-only, two positions) into a separate
 `data/demo.sqlite`.
 
+## Hosting for free (GitHub Actions + Streamlit Community Cloud)
+
+Run everything without keeping your computer on:
+
+- **GitHub Actions** (`.github/workflows/daily-scan.yml`) runs the scan on weekdays every 30 minutes
+  from 19:00 to 22:00 IST until the day's bhavcopy is available, then sends the Telegram summary.
+  Later runs that day do nothing. If the file never appears you get one error alert at 22:00. If NSE
+  blocks GitHub's servers, the alert says so.
+- **Streamlit Community Cloud** serves the dashboard at a public `https://…streamlit.app` URL,
+  behind a password.
+- Data lives as **encrypted** files on a GitHub release called `data` (see `avwap/cloud.py`).
+  They are encrypted with `APP_PASSWORD`, so they stay private even though the repository is public.
+  Positions, manual anchors and pins you change on the hosted dashboard are saved there too, and
+  the next scan uses them.
+
+What goes where:
+
+| Where | Name | Value |
+|---|---|---|
+| GitHub → Settings → Secrets and variables → Actions → **Secrets** | `TELEGRAM_BOT_TOKEN` | your bot token |
+| | `TELEGRAM_CHAT_ID` | your channel id |
+| | `APP_PASSWORD` | a password you choose (dashboard login + data encryption) |
+| GitHub → same page → **Variables** | `DASHBOARD_URL` | your `https://…streamlit.app` address |
+| Streamlit app → Settings → **Secrets** | `APP_PASSWORD`, `GITHUB_REPO`, `GITHUB_TOKEN` | same password; `ss-sumansaurav/Stock-Trading`; a fine-grained token with *Contents: read and write* on this repository |
+| Your computer's `.env` (only to upload existing data) | `APP_PASSWORD`, `GITHUB_REPO`, `GITHUB_TOKEN` | same as Streamlit |
+
+Seed the hosted data once: either run `python3 -m avwap cloud-upload` on the computer that already
+has the backfilled database, or open **Actions → Daily AVWAP scan → Run workflow** and choose
+`backfill`. The backfill only works if NSE doesn't block GitHub's servers.
+
+Keep `APP_PASSWORD` the same everywhere. Changing it makes the stored data unreadable.
+NSE and BSE sometimes block cloud servers (GitHub's runners are in the US). If the daily alerts
+report that NSE refused the download, run the daily job on your own computer (step 4 above) and
+use `cloud-upload` to keep the hosted dashboard up to date.
+
 ## How the calculations work
 
 **AVWAP** (matches TradingView Anchored VWAP, source hlc3): TP = (H+L+C)/3,

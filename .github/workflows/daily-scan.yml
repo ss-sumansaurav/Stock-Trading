@@ -1,0 +1,48 @@
+name: Daily AVWAP scan
+
+# Weekdays 19:00 to 22:00 IST, every 30 minutes (GitHub cron is in UTC: 13:30-16:30).
+# Each run makes one attempt; once the day's scan has succeeded, later runs do nothing.
+on:
+  schedule:
+    - cron: "30 13 * * 1-5"
+    - cron: "0,30 14-16 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to run"
+        type: choice
+        options: [daily, backfill, telegram-test]
+        default: daily
+
+permissions:
+  contents: write   # to store the encrypted data on the "data" release
+
+concurrency:
+  group: avwap-data
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      TZ: Asia/Kolkata
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Check secrets
+        run: |
+          for v in APP_PASSWORD TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
+            if [ -z "${!v}" ]; then echo "::error::Repository secret $v is missing (Settings > Secrets and variables > Actions)"; exit 1; fi
+          done
+      - name: Run
+        run: python -m avwap cloud-run --action "${{ inputs.action || 'daily' }}"
