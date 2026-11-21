@@ -45,6 +45,13 @@ signals:
   # Extension and supply test describe a state; true = alert only on the day it starts.
   only_new_events: true
 
+four_avwap:
+  # Price vs the highest of 4 AVWAPs: 1Y high, 1Y low, latest results, qualifying volume day.
+  lookback_days: 252             # "one year" of trading days
+  volume_share_min_pct: 10       # volume day must be >= 10% of volume traded since that day
+  results_next_day: true         # anchor results on the next session (results come after hours)
+  near_pct: 2                    # "Near" = within 2% below the highest AVWAP
+
 alerts:
   send_time: "20:00"             # IST target for the summary
   max_lines_per_section: 25

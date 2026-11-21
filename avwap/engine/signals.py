@@ -55,11 +55,13 @@ def compute_signals(df, lines: pd.DataFrame, primary_key, primary_band: pd.DataF
     # --- clusters: today vs yesterday, same anchors
     today = lines.iloc[t].dropna().to_dict()
     yday = lines.iloc[y].to_dict()
+    reclaimed = []
     for cl in find_clusters(today, cfg["clusters"]["max_spread_pct"], c):
         ytop = max((yday.get(k, np.nan) for k in cl["members"]), default=np.nan)
         if c > cl["high"] and not np.isnan(ytop) and cy < ytop:
-            emit("cluster_reclaim",
-                 f"reclaimed cluster {cl['low']:.2f}-{cl['high']:.2f} ({len(cl['members'])} AVWAPs)")
+            reclaimed.append(f"{cl['low']:.2f}-{cl['high']:.2f} ({len(cl['members'])} AVWAPs)")
+    if reclaimed:  # one signal per stock, even if several clusters were reclaimed
+        emit("cluster_reclaim", "reclaimed cluster " + "; ".join(reclaimed))
 
     # --- above every AVWAP for the first time in N days
     if lines.shape[1]:

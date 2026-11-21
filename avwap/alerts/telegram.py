@@ -57,7 +57,22 @@ def build_summary(report: dict, cfg: dict) -> str:
             for a in p["alerts"]:
                 lines.append(f"   ↳ {e(a)}")
 
-    # 2. signals grouped by type
+    # 2. 4-AVWAP setup: stocks that closed above all four AVWAPs for the first time
+    fours = [s for s in report["results"] if (s.get("four") or {}).get("above")]
+    new4 = [s for s in fours if s["four"].get("crossed_today")]
+    if fours:
+        lines += ["", f"<b>🚀 Above all 4 AVWAPs: {len(new4)} new today</b> ({len(fours)} in total)"]
+        new4.sort(key=lambda s: -(s["vol_ratio"] if s["vol_ratio"] == s["vol_ratio"] else 0))
+        for s in new4[:maxn]:
+            f = s["four"]
+            vol = f"vol {s['vol_ratio']:.1f}×" if s["vol_ratio"] == s["vol_ratio"] else "vol –"
+            part = "" if f.get("complete") else f" ({4 - len(f['missing'])}/4)"
+            lines.append(f"{sym(s['symbol'])} {_fmt(s['close'])} · highest AVWAP {_fmt(f['max_avwap'])} "
+                         f"({f['dist_pct']:+.1f}%){part} · {vol}")
+        if len(new4) > maxn:
+            lines.append(f"… and {len(new4) - maxn} more (see the 4-AVWAP tab)")
+
+    # 3. signals grouped by type
     by = defaultdict(list)
     for s in report["results"]:
         for x in s["signals"]:
@@ -82,7 +97,7 @@ def build_summary(report: dict, cfg: dict) -> str:
         if len(items) > maxn:
             lines.append(f"… and {len(items) - maxn} more (see dashboard)")
 
-    # 3. top clusters: tightest clusters with most members, closest to price
+    # 4. top clusters: tightest clusters with most members, closest to price
     cl = []
     for s in report["results"]:
         for c in s["clusters"]:

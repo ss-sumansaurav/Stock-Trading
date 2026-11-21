@@ -102,7 +102,7 @@ def write(sql: str, params=()):
             st.error(f"Saved here, but could not save to GitHub: {e}")
 
 qp = st.query_params
-PAGES = ["Scan", "Chart", "Positions", "Status"]
+PAGES = ["Scan", "4-AVWAP", "Chart", "Positions", "Status"]
 default_page = "Chart" if "symbol" in qp else qp.get("page", "Scan")
 if "page" not in st.session_state:
     st.session_state.page = default_page if default_page in PAGES else "Scan"
@@ -197,8 +197,99 @@ def page_scan():
         st.rerun()
 
 
+# =============================================================== 4-AVWAP
+FOUR_HELP = """
+**The setup.** For every stock, four AVWAPs are drawn from the last year:
+**1Y high** (people who bought at the top), **1Y low** (people who bought the bottom),
+**Results** (the session after the latest quarterly results) and the **Volume day**
+(the biggest-volume day whose volume is still at least 10% of everything traded since,
+so its buyers still matter). A stock qualifies when it closes **above the highest of the four**:
+every one of those groups is then in profit and none of them is overhead supply.
+
+**Status:** *Above all* = qualifies · *Near* = within 2% below the highest AVWAP (watchlist) · *Below*.
+**New today** = closed above all four today but not yesterday. **3/4** means no results date was
+available, so only three AVWAPs were used.
+"""
+
+
+def page_four():
+    d, df = latest_scan()
+    st.subheader(f"4-AVWAP · {d}" if d else "4-AVWAP")
+    if df.empty:
+        st.info("No scan yet.")
+        return
+    rows = []
+    for r in df.itertuples():
+        try:
+            f = json.loads(r.payload).get("four") or {}
+        except (TypeError, ValueError):
+            f = {}
+        if not f.get("anchors"):
+            continue
+        a = f["anchors"]
+        def val(k):
+            return a[k]["avwap"] if k in a else None
+        rows.append({
+            "Symbol": r.symbol, "Close": r.close, "Status": f.get("status", ""),
+            "New today": "✓" if f.get("crossed_today") else "",
+            "% vs highest": f.get("dist_pct"), "Highest AVWAP": f.get("max_avwap"),
+            "Highest is": {"high": "1Y high", "low": "1Y low", "results": "Results",
+                           "volume": "Volume day"}.get(f.get("max_key"), ""),
+            "1Y high AVWAP": val("high"), "1Y low AVWAP": val("low"),
+            "Results AVWAP": val("results"),
+            "Results date": a.get("results", {}).get("results_date", "–"),
+            "Volume-day AVWAP": val("volume"), "Volume day": a.get("volume", {}).get("date", "–"),
+            "Vol day share %": a.get("volume", {}).get("volume_share_pct"),
+            "Used": f"{4 - len(f.get('missing', []))}/4", "Vol ×20d": r.vol_ratio, "Sector": r.sector,
+        })
+    t = pd.DataFrame(rows)
+    if t.empty:
+        st.info("Run a new scan to calculate the 4-AVWAP setup.")
+        return
+    above, new, near = (t["Status"] == "Above all").sum(), (t["New today"] == "✓").sum(), \
+        t["Status"].str.startswith("Near").sum()
+    st.markdown(f"**{above}** above all four · **{new}** new today · **{near}** near (watchlist) · "
+                f"of {len(t)} stocks")
+    c1, c2 = st.columns(2)
+    status = c1.multiselect("Status", ["Above all", "New today", "Near", "Below"],
+                            default=["Above all", "Near"], placeholder="All")
+    sectors = c2.multiselect("Sector", sorted(t["Sector"].unique(), key=lambda x: (x == "Other", x)),
+                             placeholder="All sectors")
+    f = t
+    if status:
+        m = pd.Series(False, index=t.index)
+        for s_ in status:
+            if s_ == "New today":
+                m |= t["New today"] == "✓"
+            else:
+                m |= t["Status"].str.startswith(s_)
+        f = f[m]
+    if sectors:
+        f = f[f["Sector"].isin(sectors)]
+    f = f.sort_values(["New today", "% vs highest"], ascending=[False, False])
+    money = {c: st.column_config.NumberColumn(format="%.2f") for c in
+             ["Close", "Highest AVWAP", "1Y high AVWAP", "1Y low AVWAP", "Results AVWAP", "Volume-day AVWAP"]}
+    ev = st.dataframe(
+        f, hide_index=True, width="stretch", height=560, on_select="rerun", selection_mode="single-row",
+        column_config=money | {
+            "% vs highest": st.column_config.NumberColumn(format="%+.2f%%"),
+            "Vol day share %": st.column_config.NumberColumn(format="%.0f%%"),
+            "Vol ×20d": st.column_config.NumberColumn(format="%.1f×")})
+    st.caption("Tap a row to open its chart with the four AVWAP lines.")
+    with st.expander("How this works"):
+        st.markdown(FOUR_HELP)
+    rows_sel = ev.selection.rows if ev and hasattr(ev, "selection") else []
+    if rows_sel:
+        st.session_state.show_four = True
+        open_chart(f.iloc[rows_sel[0]]["Symbol"])
+        st.rerun()
+
+
 # =============================================================== CHART
-def build_figure(an, visible: set, show_ma: bool, months: int):
+FOUR_COLORS = {"high": "#e5484d", "low": "#1aa37a", "results": "#8a5cd6", "volume": "#f59e0b"}
+
+
+def build_figure(an, visible: set, show_ma: bool, months: int, show_four: bool = False):
     df = an.df
     start = df.index[-1] - pd.DateOffset(months=months)
     v = df[df.index >= start]
@@ -207,8 +298,8 @@ def build_figure(an, visible: set, show_ma: bool, months: int):
     fig.add_trace(go.Candlestick(x=v.index, open=v["open"], high=v["high"], low=v["low"], close=v["close"],
                                  name="Price", increasing_line_color="#1aa37a",
                                  decreasing_line_color="#e5484d", showlegend=False), 1, 1)
-    # primary bands
-    if an.primary is not None:
+    # primary bands (hidden in the 4-AVWAP view to keep the chart readable)
+    if an.primary is not None and not show_four:
         b = an.primary_band.loc[v.index]
         for up, dn, op in (("u2", "l2", 0.07), ("u1", "l1", 0.12)):
             fig.add_trace(go.Scatter(x=b.index, y=b[up], line=dict(width=0.6, color="rgba(42,120,214,.5)"),
@@ -217,14 +308,14 @@ def build_figure(an, visible: set, show_ma: bool, months: int):
                                      fill="tonexty", fillcolor=f"rgba(42,120,214,{op})",
                                      name=f"±{up[1]}σ primary", hoverinfo="skip"), 1, 1)
     # cluster zones
-    for c in an.clusters:
+    for c in ([] if show_four else an.clusters):
         color = "rgba(229,72,77,.2)" if c["position"] == "overhead" else "rgba(26,163,122,.2)"
         fig.add_hrect(y0=c["low"], y1=c["high"], x0=v.index[max(0, len(v) - 40)], x1=v.index[-1],
                       fillcolor=color, line_width=0, row=1, col=1, layer="below")
     # AVWAP lines
     ai, mi = 0, 0
     for a in an.anchors:
-        if a.key not in visible:
+        if a.key not in visible or show_four:
             continue
         line = an.lines[a.key].loc[v.index]
         if a.source == "manual":
@@ -244,6 +335,15 @@ def build_figure(an, visible: set, show_ma: bool, months: int):
                 mode="markers", marker=dict(symbol="triangle-down" if is_high else "triangle-up",
                                             size=10, color=color, line=dict(width=1, color="white")),
                 hovertext=f"{a.label} · {a.date:%d %b %Y}", hoverinfo="text", showlegend=False), 1, 1)
+    four = an.extra.get("four") or {}
+    if show_four:
+        names = {"high": "1Y high", "low": "1Y low", "results": "Results", "volume": "Volume day"}
+        for k, a in (four.get("anchors") or {}).items():
+            line = anchored_vwap(df, pd.Timestamp(a["date"]))["avwap"].loc[v.index]
+            top = k == four.get("max_key")
+            fig.add_trace(go.Scatter(x=line.index, y=line, mode="lines",
+                                     name=f"4-AVWAP {names[k]} {pd.Timestamp(a['date']):%d-%b-%y}",
+                                     line=dict(color=FOUR_COLORS[k], width=3 if top else 2, dash="dot")), 1, 1)
     if show_ma:
         fig.add_trace(go.Scatter(x=v.index, y=v["ema20"], name="EMA20",
                                  line=dict(color="#999", width=1, dash="dot")), 1, 1)
@@ -305,7 +405,16 @@ def page_chart():
         months = c1.select_slider("Range", options=[3, 6, 9, 12, 18, 24], value=9,
                                   format_func=lambda m: f"{m} mo")
         show_ma = c2.checkbox("EMA20 / SMA10", value=False)
-    st.plotly_chart(build_figure(an, set(visible), show_ma, months), use_container_width=True,
+    st.session_state.setdefault("show_four", False)
+    show_four = st.toggle("4-AVWAP view (only the 1Y high, 1Y low, results and volume-day lines)",
+                          key="show_four")
+    if show_four:
+        four = an.extra.get("four") or {}
+        if four.get("anchors"):
+            st.caption(f"4-AVWAP: **{four['status']}** · highest {four['max_avwap']:,.2f} "
+                       f"({four['dist_pct']:+.2f}% from price)"
+                       + (" · no results date, 3 of 4 used" if four.get("missing") else ""))
+    st.plotly_chart(build_figure(an, set(visible), show_ma, months, show_four), use_container_width=True,
                     config={"displaylogo": False, "scrollZoom": True,
                             "modeBarButtonsToRemove": ["lasso2d", "select2d"]})
 
@@ -457,4 +566,4 @@ def page_status():
                  hide_index=True, use_container_width=True)
 
 
-{"Scan": page_scan, "Chart": page_chart, "Positions": page_positions, "Status": page_status}[page]()
+{"Scan": page_scan, "4-AVWAP": page_four, "Chart": page_chart, "Positions": page_positions, "Status": page_status}[page]()
