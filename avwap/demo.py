@@ -61,6 +61,10 @@ def load_demo(db: DB, n: int = 40, days: int = 600, seed0: int = 7):
             c.executemany("INSERT OR REPLACE INTO prices_raw VALUES (?,?,?,?,?,?,?,?,?,?)",
                           [(isin, f"{d:%Y-%m-%d}", symbol, r.open, r.high, r.low, r.close, r.volume,
                             "EQ", exch) for d, r in zip(raw.index, raw.itertuples())])
+            # quarterly results roughly every 63 sessions (none for the last stock: shows 3/4)
+            if k != n - 2:
+                c.executemany("INSERT OR REPLACE INTO results_dates VALUES (?,?,?)",
+                              [(symbol, f"{d:%Y-%m-%d}", "DEMO") for d in df.index[-(20 + k % 30)::-63][:6]])
         days_idx = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=days)
         c.executemany("INSERT OR REPLACE INTO loaded_days VALUES (?,?,?,datetime('now'))",
                       [(f"{d:%Y-%m-%d}", "DEMO", n) for d in days_idx])

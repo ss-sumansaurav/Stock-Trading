@@ -46,6 +46,12 @@ signals:
   # Extension and supply test describe a state; true = alert only on the day it starts.
   only_new_events: true
 
+four_avwap:
+  lookback_days: 252
+  volume_share_min_pct: 10
+  results_next_day: true
+  near_pct: 2
+
 alerts:
   send_time: "20:00"             # IST target for the summary
   max_lines_per_section: 25

@@ -9,6 +9,7 @@ import pandas as pd
 from .anchors import Anchor, apply_manual, choose_primary, detect_anchors, major_low_anchor
 from .avwap import anchored_vwap, avwap_matrix
 from .clusters import find_clusters
+from .four_avwap import four_avwap
 from .indicators import add_indicators
 from .signals import compute_signals
 
@@ -50,6 +51,7 @@ class StockAnalysis:
             "clusters": self.clusters,
             "near_cluster": bool(in_cl),
             "signals": self.signals,
+            "four": self.extra.get("four"),
             "rsi": float(last.get("rsi", np.nan)),
             "atr": float(last.get("atr", np.nan)),
         }
@@ -81,4 +83,5 @@ def analyze(symbol: str, prices: pd.DataFrame, cfg: dict, manual=None, pin_date=
     sigs = compute_signals(df, lines, primary.key if primary else None, band, anchors, cfg) \
         if primary is not None else []
     return StockAnalysis(symbol, df, anchors, lines, primary, reason, band,
-                         major_low_anchor(anchors), clusters, sigs)
+                         major_low_anchor(anchors), clusters, sigs,
+                         extra={"four": four_avwap(df, cfg, results_dates)})

@@ -205,6 +205,14 @@ the day the condition starts (`only_new_events`), so they don't repeat every eve
 entry (or your choice). Alerts when the close crosses below either, when price reaches +2σ of the
 trailing AVWAP, and when a new higher low forms after entry.
 
+**4-AVWAP setup** (dashboard tab "4-AVWAP", Telegram section "Above all 4 AVWAPs"): four AVWAPs per
+stock, anchored at the 1-year high, the 1-year low, the session after the latest quarterly results,
+and the biggest-volume day of the year whose volume is still at least 10% of all volume traded
+since (if the biggest day is too diluted, the next-biggest qualifying day is used). A stock qualifies
+when it closes above the highest of the four. "New today" means it qualified today but not yesterday,
+"Near" means within 2% below. If no results date is known, three AVWAPs are used and the row shows 3/4.
+Thresholds are in `settings.yaml` under `four_avwap`.
+
 **Corporate actions**: splits, bonuses and consolidations are parsed from NSE's corporate-action
 feed. Prices before the ex-date are divided by the factor and volumes multiplied. Raw data
 (`prices_raw`) is never modified; adjusted data lives in `prices_adj`. Special dividends are not
